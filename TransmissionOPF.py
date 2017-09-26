@@ -16,16 +16,19 @@ ppc = case30()
 nt = 24 # time period
 
 # define cost
-cg1 = ppc["gencost"][:, [6]].T # % 1st order generator cost
-cg2 = ppc["gencost"][:, [5]].T # 2nd order generator cost
+cg1 = ppc["gencost"][:, [5]].T # % 1st order generator cost
+cg2 = ppc["gencost"][:, [4]].T # 2nd order generator cost
 crgs = array([[6, 6.75, 7, 5.25, 5, 5]])
 conoff = np.ones((1,6)); # generator on cost
 
-#    sampleL=[120.6 115.8 114.8 112.6 114.0 113.4 117.1 126.3 130.7 132.5 135.6 134.8 136.5 137.7 137.1 138.0 136.3 133.3 131.7 129.3 128.2 127.4 125.6 124.2];
-#    sf=sampleL./mean(sampleL);
-#    sf=repmat(sf,30,1);
-#    loads=repmat(mpc.bus(:,3),1,24); 
-#    loads=loads.*sf;
+sampleL = array([[120.6, 115.8, 114.8, 112.6, 114.0, 113.4, 
+                  117.1, 126.3, 130.7, 132.5, 135.6, 134.8, 
+                  136.5, 137.7, 137.1, 138.0, 136.3, 133.3, 
+                  131.7, 129.3, 128.2, 127.4, 125.6, 124.2]]) # sample load profile
+sf = sampleL/np.mean(sampleL)
+sf = np.matlib.repmat(sf,30,1)
+loads = np.matlib.repmat(ppc["bus"][:, [2]],1,24)
+loads = loads*sf
 
 #     loads(8,:)=loads(8,:)+5*ones(1,nt);%add 5mw of load at bus 8 to create congestion
 #     load ('newnetCavg.mat');
@@ -36,9 +39,8 @@ conoff = np.ones((1,6)); # generator on cost
 
 
 #%% Create B Matrix
-#
-#    % make Y/B bus matrix and A matrix in Pline=A*Pinj
-#    [Ybus, Yf, Yt] = makeYbus(mpc);
+#    make Y/B bus matrix and A matrix in Pline=A*Pinj
+    [Ybus, Yf, Yt] = makeYbus(mpc);
 #    B=full(real(i.*Ybus));
 #    NB=-B;
 #    Bred=B(1:29,1:29); % Reduced B Matrix
