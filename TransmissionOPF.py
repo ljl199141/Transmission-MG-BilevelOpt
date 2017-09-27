@@ -43,7 +43,7 @@ loads = loads*sf
 
 #%% Create B Matrix
 #    make Y/B bus matrix and A matrix in Pline=A*Pinj
-#[Ybus, Yf, Yt] = makeYbus(100,ppc["bus"],ppc["branch"])
+[Ybus, Yf, Yt] = makeYbus(100,ppc["bus"],ppc["branch"])
 #    B=full(real(i.*Ybus));
 #    NB=-B;
 #    Bred=B(1:29,1:29); % Reduced B Matrix
