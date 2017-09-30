@@ -9,9 +9,9 @@ import pandas as pd
 import pypower as pp
 import pyomo.core
 import numpy as np
-from pypower.api import case30
-
+from pypower.api import case30,makeYbus
 from numpy.linalg import inv
+from pyomo.environ import *
 
 ppc = case30()
 
@@ -23,10 +23,10 @@ linenum = ppc["branch"].shape[0]
 # define cost
 cg1 = ppc["gencost"][:, [5]].T # % 1st order generator cost
 cg2 = ppc["gencost"][:, [4]].T # 2nd order generator cost
-crgs = array([[6, 6.75, 7, 5.25, 5, 5]])
-conoff = 2*ones((1,gennum)) # generator on cost
+crgs = np.array([[6, 6.75, 7, 5.25, 5, 5]])
+conoff = 2*np.ones((1,gennum)) # generator on cost
 
-sampleL = array([[120.6, 115.8, 114.8, 112.6, 114.0, 113.4, 
+sampleL = np.array([[120.6, 115.8, 114.8, 112.6, 114.0, 113.4, 
                   117.1, 126.3, 130.7, 132.5, 135.6, 134.8, 
                   136.5, 137.7, 137.1, 138.0, 136.3, 133.3, 
                   131.7, 129.3, 128.2, 127.4, 125.6, 124.2]]) # sample load profile
@@ -46,7 +46,6 @@ loads = loads*sf
 #%% Create B Matrix
 #    make Y/B bus matrix and A matrix in Pline=A*Pinj
 Ybus, Yf, Yt = makeYbus(100,ppc["bus"],ppc["branch"])
-from pyomo.environ import *
 B = (1j*Ybus).real.todense()
 NB = -B
 Bred = B[0:busnum-1,0:busnum-1] # Reduced B Matrix
@@ -71,9 +70,9 @@ D = np.diag(b[:,0]) # diagnol matrix of the susceptance
 #%% Define Optimization Variables and Their Bounds
 
 # 3. Generators
-one = ones(nt)
-Gmax = array([80*one,80*one,40*one,50*one,30*one,55*one])
-Gmin = array(np.zeros((6,nt)))
+one = np.ones(nt)
+Gmax = np.array([80*one,80*one,40*one,50*one,30*one,55*one])
+Gmin = np.array(np.zeros((6,nt)))
 
 model = ConcreteModel()
 model.bn = RangeSet(0,busnum-1)
