@@ -1,0 +1,47 @@
+
+Gurobi 7.5.1 (mac64, Python) logging started Sun Nov  5 11:02:00 2017
+
+Academic license - for non-commercial use only
+Read LP format model from file /var/folders/8f/gy4qp_ms0cx4_7jfzyy6znwm0000gn/T/tmpgDg95E.pyomo.lp
+Reading time = 0.04 seconds
+x2905: 5003 rows, 2905 columns, 20203 nonzeros
+Optimize a model with 5003 rows, 2905 columns and 20203 nonzeros
+Model has 60 quadratic objective terms
+Variable types: 1869 continuous, 1036 integer (1036 binary)
+Coefficient statistics:
+  Matrix range     [3e-02, 1e+05]
+  Objective range  [1e+00, 7e+00]
+  QObjective range [2e-02, 1e-01]
+  Bounds range     [5e-02, 1e+03]
+  RHS range        [5e-02, 1e+05]
+Presolve removed 3141 rows and 1528 columns
+Presolve time: 0.12s
+Presolved: 1862 rows, 1377 columns, 6809 nonzeros
+Presolved model has 60 quadratic objective terms
+Variable types: 982 continuous, 395 integer (395 binary)
+
+Root relaxation: objective 6.007731e+03, 2606 iterations, 0.06 seconds
+
+    Nodes    |    Current Node    |     Objective Bounds      |     Work
+ Expl Unexpl |  Obj  Depth IntInf | Incumbent    BestBd   Gap | It/Node Time
+
+     0     0 6007.73070    0  304          - 6007.73070      -     -    0s
+     0     0 6007.73070    0  141          - 6007.73070      -     -    0s
+     0     0 6007.73070    0  226          - 6007.73070      -     -    0s
+     0     0 6007.73070    0  113          - 6007.73070      -     -    0s
+     0     0 6007.73070    0  117          - 6007.73070      -     -    0s
+     0     0 6007.73070    0  116          - 6007.73070      -     -    0s
+     0     0 6007.73070    0  116          - 6007.73070      -     -    0s
+     0     0 6007.73070    0  116          - 6007.73070      -     -    0s
+     0     0 6007.73070    0  113          - 6007.73070      -     -    0s
+     0     0 6007.73070    0  131          - 6007.73070      -     -    0s
+H    0     0                    16743.607292 6007.73070  64.1%     -    0s
+     0     2 6007.73070    0  131 16743.6073 6007.73070  64.1%     -    0s
+H 3008   990                    6074.6123374 6047.42962  0.45%  11.7    3s
+H 3037   927                    6072.9848147 6047.42962  0.42%  11.8    3s
+H 3135   784                    6067.9822458 6047.42962  0.34%  11.7    3s
+H 3944   819                    6065.0904004 6048.16256  0.28%  11.6    3s
+H 4667   947                    6064.7062882 6048.67878  0.26%  11.9    4s
+  6065  1422 6062.86143   74   69 6064.70629 6049.35625  0.25%  12.6    5s
+H 6082   894                    6059.7037193 6049.35625  0.17%  12.6    5s
+ 13584  1671 infeasible   70      6059.70372 6052.15026  0.12%  14.3   10s
