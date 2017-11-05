@@ -12,7 +12,13 @@ import numpy as np
 from pypower.api import case30,makeYbus
 from numpy.linalg import inv
 from pyomo.environ import *
+from pyomo.bilevel import *
+from pyomo.opt import SolverFactory
 
+
+
+
+#%% Upper Level problem: Transmission network 
 ppc = case30()
 
 nt = 10 # time period
@@ -163,14 +169,173 @@ c = sum(model.pg[i,j]*cg1[0,i] for i in xrange(gennum) for j in xrange(nt))
 d = sum(model.pg[i,j]*model.pg[i,j]*cg2[0,i] for i in xrange(gennum) for j in xrange(nt))
 #    return a+b+c+d
 #model.obj = Objective(rule = exps)
-model.obj = Objective(expr = a+b+c+d)
+model.obj = Objective(expr = a+b+c+d, sense = minimize)
 
-opt = SolverFactory("gurobi")
-results = opt.solve(model)
-model.pg.display()
-model.rgs.display()
-model.onoff.display()
-#model.Pinj.display()
-model.pflow.display()
-model.obj.display()
+
+
+
+
+
+
+
+#%% Lower Level Problem：Microgrid Model
+#%% System Parameters
+lmp = 5.3*np.ones(nt)
+cg = np.array([[3.3, 3.3, 3.3]]) 
+cd = 1.01*np.array([[3.3, 3.3, 3.3, 3.3, 3.3, 3.3]]) # slightly larger than cg to encourage cost
+cb = 0.1 # needs to be small so that MG stores energy rather than export energy
+ci = lmp # change
+ce = 0.8*lmp #change
+#
+ndl = 6 # number of dispatchable load
+ng = 3 # number of generators
+nb = 1 # number of storage
+#
+model.sub = SubModel()
+model.sub.nb = RangeSet(0,nb-1)
+model.sub.ndl = RangeSet(0,ndl-1)
+model.sub.ntt = RangeSet(0,nt-1)
+model.sub.ng = RangeSet(0,ng-1)
+#%% Define Optimization Variables and Their Bounds
+# 1. Dispatchable loads
+
+one = np.ones(nt)
+Pdmin = 0.1*np.array([0.5*one,4*one,2*one,5.5*one,1*one,7*one])
+Pdmax = 0.03*np.array([10*one,16*one,15*one,20*one,27*one,32*one])
+
+def b1(model,i,j):
+    return (Pdmin[i,j],Pdmax[i,j])
+model.sub.pd=Var(model.sub.ndl, model.sub.ntt, bounds = b1)
+
+# 2. Non-controllable load    
+nload = 0.03 * np.array([[120.6, 115.8, 114.8, 112.6, 114.0, 113.4, 
+                  117.1, 126.3, 130.7, 132.5, 135.6, 134.8, 
+                  136.5, 137.7, 137.1, 138.0, 136.3, 133.3, 
+                  131.7, 129.3, 128.2, 127.4, 125.6, 124.2]]) # sample load profile
+nload = nload[:,0:nt]
+
+# 3. Generators
+Gmax = 0.3 * np.array([5*one,4.5*one,7*one])
+Gmin = np.array([1*one, 0.8*one, 1.5*one])
+def b2(model,i,j):
+    return (Gmin[i,j],Gmax[i,j])
+model.sub.pg = Var(model.sub.ng, model.sub.ntt, bounds=b2)
+
+Rgsmin = -0.3*Gmax
+Rgsup = 0.3*Gmax
+def b8(model,i,j):
+    return (0,0)
+model.sub.rgs = Var(model.sub.ng, model.sub.ntt, bounds=b8)
+model.sub.z = Var(model.sub.ng, model.sub.ntt)
+
+# 4. Storage
+# power to and from storage
+Pbmin = -3*np.ones((nb,nt))
+Pbmax = 3*np.ones((nb,nt))
+def b3(model,i,j):
+    return (Pbmin[i,j],Pbmax[i,j])
+model.sub.pb = Var(model.sub.nb, model.sub.ntt, bounds=b3)
+
+# state of charge
+Bmin = np.zeros((nb,nt))
+Bmax = 10*np.ones((nb,nt))
+def b4(model,i,j):
+    return (Bmin[i,j],Bmax[i,j])
+model.sub.b = Var(model.sub.nb, model.sub.ntt, bounds=b4)
+
+
+
+# 4. Import & Export
+def b5(model,i):
+    return (0, 1000)
+model.sub.ex = Var(model.sub.ntt, bounds=b5)
+
+def b6(model,i):
+    return (0,1000)
+model.sub.im = Var(model.sub.ntt, bounds=b6)
+
+Nmin = -20*one
+Nmax = 20*one
+def b7(model,i):
+    return (Nmin[i],Nmax[i])
+model.sub.net = Var(model.sub.ntt, bounds=b7)
+ 
+#%% Constraints
+# DG Constraints
+Rdn = 0.3*Gmax
+Rup = 0.3*Gmax
+model.sub.cons = ConstraintList()
+model.sub.cons.add(model.sub.b[0,0] <= 5) # initialize battery energy state
+model.sub.cons.add(model.sub.b[0,0] >= 5) # initialize battery energy state
+
+for g in xrange(ng):
+    for h in xrange(nt-1):
+        model.sub.cons.add(-Rdn[g,h+1] <= model.sub.pg[g,h+1]-model.sub.pg[g,h] <= Rup[g,h+1]) # ramping constraints
+        model.sub.cons.add((model.sub.pg[g,h+1]+model.sub.rgs[g,h+1])-(model.sub.pg[g,h]-model.sub.rgs[g,h]) <= float(Rup[g,h+1])) # Up ramping Constraints with Rgs
+        model.sub.cons.add(float(-Rdn[g,h+1]) <= (model.sub.pg[g,h+1]-model.sub.rgs[g,h+1])-(model.sub.pg[g,h]+model.sub.rgs[g,h])) # Dn Ramping Constraints with Rgs
+
+for g in xrange(ng):
+    for h in xrange(nt):
+#        model.sub.cons.add(Gmin[g,h] <= model.sub.pg[g,h] + model.sub.rgs[g,h])#Generator Bounds with Rgs
+        model.sub.cons.add(model.sub.pg[g,h] + model.sub.rgs[g,h] <= Gmax[g,h])
+        model.sub.cons.add(model.sub.rgs[g,h] <= model.sub.z[g,h])
+        model.sub.cons.add(-model.sub.rgs[g,h] <= model.sub.z[g,h])
+
+for h in xrange(nt):
+    model.sub.cons.add(sum(model.sub.pg[r,h] for r in xrange(ng)) >= sum(nload[r1,h] + model.sub.pb[r1,h] for r1 in xrange(1))+ model.sub.net[h] + sum(model.sub.pd[r2,h] for r2 in xrange(ndl))) # Power balance equation forecast 
+    model.sub.cons.add(sum(model.sub.pg[r,h] for r in xrange(ng)) <= sum(nload[r1,h] + model.sub.pb[r1,h] for r1 in xrange(1))+ model.sub.net[h] + sum(model.sub.pd[r2,h] for r2 in xrange(ndl))) # Power balance equation forecast 
+    model.sub.cons.add(model.sub.ex[h] - model.sub.im[h] <= model.sub.net[h])
+    model.sub.cons.add(model.sub.ex[h] - model.sub.im[h] >= model.sub.net[h])
+    
+for i in xrange(nb):
+    for j in xrange(nt-1):
+        model.sub.cons.add(model.sub.b[i,j+1] >= model.sub.b[i,j]+model.sub.pb[i,j])
+        model.sub.cons.add(model.sub.b[i,j+1] <= model.sub.b[i,j]+model.sub.pb[i,j])
+
+for i in xrange(nb):
+    for j in xrange(nt):
+        model.sub.cons.add(-model.sub.pb[i,j] <= model.sub.b[i,j])
+
+#%% Objective
+aa = sum(cb * model.sub.b[i,j] for i in xrange(nb) for j in xrange(nt))
+bb = -sum(model.sub.pd[i,j]*cd[0,i] for i in xrange(ndl) for j in xrange(nt))
+cc = sum(model.sub.pg[i,j]*cg[0,i] for i in xrange(ng) for j in xrange(nt))
+dd = -sum(model.sub.ex[i]*ce[i] for i in xrange(nt))
+ee = sum(model.sub.im[i]*ci[i] for i in xrange(nt))
+
+model.sub.obj = Objective(expr = aa+bb+cc+dd+ee, sense = minimize)
+#model.sub.obj = Objective(expr = aa, sense = minimize)
+
+
+
+
+#model.sub.y = Var(bounds=(0,None))
+#model.sub.o = Objective(expr=model.sub.y, sense=minimize)
+#model.sub.con = ConstraintList()
+#model.sub.con.add ( model.sub.y >= 3)
+#model.sub.c3 = Constraint(expr=model.sub.y <= 12)
+
+opt = SolverFactory("bilevel_blp_global")
+opt.options["solver"] = 'gurobi'
+results = opt.solve(model,tee=True)
+
+
+model.sub.o.display()
+model.sub.y.display()
+model.sub.pg.display()
+model.sub.rgs.display()
+model.sub.pb.display()
+model.sub.b.display()
+model.sub.pd.display()
+model.sub.ex.display()
+model.sub.im.display()
+model.sub.net.display()
+model.sub.obj.display()  
+
+#model.pg.display()
+#model.rgs.display()
+#model.onoff.display()
+##model.Pinj.display()
+#model.pflow.display()
+#model.obj.display()
 

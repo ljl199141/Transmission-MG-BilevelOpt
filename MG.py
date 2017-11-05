@@ -14,7 +14,7 @@ from numpy.linalg import inv
 from pyomo.environ import *
 
 #%% System Parameters
-nt = 24;
+nt = 10
 lmp = 5.3*np.ones(nt)
 cg = np.array([[3.3, 3.3, 3.3]]) 
 cd = 1.01*np.array([[3.3, 3.3, 3.3, 3.3, 3.3, 3.3]]) # slightly larger than cg to encourage cost
@@ -41,23 +41,24 @@ def b1(model,i,j):
 model.pd=Var(model.ndl, model.nt, bounds = b1)
 
 # 2. Non-controllable load    
-NCL = 0.03 * np.array([[120.6, 115.8, 114.8, 112.6, 114.0, 113.4, 
+nload = 0.03 * np.array([[120.6, 115.8, 114.8, 112.6, 114.0, 113.4, 
                   117.1, 126.3, 130.7, 132.5, 135.6, 134.8, 
                   136.5, 137.7, 137.1, 138.0, 136.3, 133.3, 
                   131.7, 129.3, 128.2, 127.4, 125.6, 124.2]]) # sample load profile
-NCL = NCL[:,0:nt];
+nload = nload[:,0:nt]
 
 # 3. Generators
 Gmax = 0.3 * np.array([5*one,4.5*one,7*one])
 Gmin = np.array([1*one, 0.8*one, 1.5*one])
 def b2(model,i,j):
     return (Gmin[i,j],Gmax[i,j])
-model.pg = Var(model.ng, model.nt, bounds = b2)
-#Rgsmin = 0.3*Gmax
-#Rup = 0.3*Gmax
-#def b8(model,i,j):
-#    return (Rdn[i,j],Rup[i,j])
-model.rgs = Var(model.ng, model.nt)
+model.pg = Var(model.ng, model.nt, bounds=b2)
+
+Rgsmin = -0.3*Gmax
+Rgsup = 0.3*Gmax
+def b8(model,i,j):
+    return (0,0)
+model.rgs = Var(model.ng, model.nt, bounds=b8)
 model.z = Var(model.ng, model.nt)
 
 # 4. Storage
@@ -74,15 +75,17 @@ Bmax = 10*np.ones((nb,nt))
 def b4(model,i,j):
     return (Bmin[i,j],Bmax[i,j])
 model.b = Var(model.nb, model.nt, bounds=b4)
-model.b[0,0] = 5 # initialize battery energy state
+
 
 # 4. Import & Export
 def b5(model,i):
     return (0,1000)
 model.ex = Var(model.nt, bounds=b5)
+
 def b6(model,i):
     return (0,1000)
 model.im = Var(model.nt, bounds=b6)
+
 Nmin = -20*one
 Nmax = 20*one
 def b7(model,i):
@@ -94,6 +97,7 @@ model.net = Var(model.nt, bounds=b7)
 Rdn = 0.3*Gmax
 Rup = 0.3*Gmax
 model.cons = ConstraintList()
+model.cons.add(model.b[0,0] == 5) # initialize battery energy state
 for g in xrange(ng):
     for h in xrange(nt-1):
         model.cons.add(-Rdn[g,h+1] <= model.pg[g,h+1]-model.pg[g,h] <= Rup[g,h+1]) # ramping constraints
@@ -102,16 +106,14 @@ for g in xrange(ng):
 
 for g in xrange(ng):
     for h in xrange(nt):
-        model.cons.add(Gmin[g,h] <= model.pg[g,h] + model.rgs[g,h])#Generator Bounds with Rgs
+#        model.cons.add(Gmin[g,h] <= model.pg[g,h] + model.rgs[g,h])#Generator Bounds with Rgs
         model.cons.add(model.pg[g,h] + model.rgs[g,h] <= Gmax[g,h])
         model.cons.add(model.rgs[g,h] <= model.z[g,h])
         model.cons.add(-model.rgs[g,h] <= model.z[g,h])
 
 for h in xrange(nt):
-    model.cons.add(sum(model.rgs[r,h] for r in xrange(ng)) == sum(0.00*NCL[r,h] for r in xrange(1)))
-    model.cons.add(sum(model.pg[r,h] for r in xrange(ng)) == sum(NCL[r,h] + model.pb[r,h] for r in xrange(1))+ model.net[h] + sum(model.pd[r,h] for r in xrange(ndl))) # Power balance equation forecast
-#    model.cons.add(model.ex[h] == max(model.net[h],0))
-#    model.cons.add(model.im[h] == max(-model.net[h],0))
+    model.cons.add(sum(model.pg[r,h] for r in xrange(ng)) == sum(nload[r1,h] + model.pb[r1,h] for r1 in xrange(1))+ model.net[h] + sum(model.pd[r2,h] for r2 in xrange(ndl))) # Power balance equation forecast
+    model.cons.add(model.ex[h] - model.im[h] == model.net[h])
 
 for i in xrange(nb):
     for j in xrange(nt-1):
@@ -121,20 +123,14 @@ for i in xrange(nb):
         model.cons.add(-model.pb[i,j] <= model.b[i,j])
 
 #%% Objective
-#%% Objective
-#def exps(model):
 a = sum(cb * model.b[i,j] for i in xrange(nb) for j in xrange(nt))
-b = sum(model.pd[i,j]*cd[0,i] for i in xrange(ndl) for j in xrange(nt))
+b = -sum(model.pd[i,j]*cd[0,i] for i in xrange(ndl) for j in xrange(nt))
 c = sum(model.pg[i,j]*cg[0,i] for i in xrange(ng) for j in xrange(nt))
-ex = sum(model.ex[i]*ce[i] for i in xrange(nt))
-im = sum(model.im[i]*ci[i] for i in xrange(nt))
-#    return a+b+c+d
-#model.obj = Objective(rule = exps)
-model.obj = Objective(expr = a+b+c+ex+im)
+d = -sum(model.ex[i]*ce[i] for i in xrange(nt))
+e = sum(model.im[i]*ci[i] for i in xrange(nt))
 
-#%  Objective=sum(pg')*cg-sum(pd')*cd+sum(b')*cb+sum(im)*ci-sum(ex)*ce+sum(abs(rls))*crls+sum(abs(rgs'))*crgs+sum(abs(rgd'))*crgd;
-#Objective=sum(pg')*cg-sum(pd')*cd   +sum(b')*cb  +im*ci'-ex*ce';
-#      
+model.obj = Objective(expr = a+b+c+d+e)
+    
 opt = SolverFactory("gurobi")
 results = opt.solve(model)
 model.pg.display()
@@ -144,4 +140,5 @@ model.pb.display()
 model.b.display()
 model.pd.display()
 model.im.display()
+model.net.display()
 model.obj.display()        
