@@ -4,7 +4,6 @@ Spyder Editor
 
 This is a temporary script file.
 """
-
 import pandas as pd
 import pypower as pp
 import pyomo.core
@@ -15,10 +14,8 @@ from pyomo.environ import *
 from pyomo.bilevel import *
 from pyomo.opt import SolverFactory
 
+#%% TS Parameters
 
-
-
-#%% Upper Level problem: Transmission network 
 ppc = case30()
 
 nt = 10 # time period
@@ -48,8 +45,7 @@ loads = loads*sf
 #     wbus=25; 
 #     wl=0; % wind penetration scaling factor
 
-
-#%% Create B Matrix
+# Create B Matrix
 #    make Y/B bus matrix and A matrix in Pline=A*Pinj
 Ybus, Yf, Yt = makeYbus(100,ppc["bus"],ppc["branch"])
 B = (1j*Ybus).real.todense()
@@ -72,8 +68,7 @@ r = ppc["branch"][:,[2]] # reactance
 b = x/(x*x+r*r) # susceptance
 D = np.diag(b[:,0]) # diagnol matrix of the susceptance
 
-
-#%% Define Optimization Variables and Their Bounds
+#%% TS Variables
 
 # 3. Generators
 one = np.ones(nt)
@@ -99,9 +94,101 @@ def b2(model,i,j):
 model.rgs = Var(model.gn, model.nt, bounds = b2)
 model.z = Var(model.gn, model.nt) # slack variable for rgs
 
-#%% Power Flow Constraints
+def b3(model,i,j):
+    return (-lineC[i,0], lineC[i,0])
+model.pflow =  Var(model.ln, model.nt, bounds=b3) #line flow
+
 model.Pinj = Var(model.bn, model.nt) #% bus nodal matrix with forecast wind
+
+model.theta =  Var(model.bn1, model.nt) #bus angle
+Bredinv = inv(Bred)
+
+prod = np.dot(D,m)
+mbus = 7 # put MG at bus 8 
+
+#%% MG  Parameters
+
+lmp = 5.3*np.ones(nt)
+cg = np.array([[3.3, 3.3, 3.3]]) 
+cd = 1.01*np.array([[3.3, 3.3, 3.3, 3.3, 3.3, 3.3]]) # slightly larger than cg to encourage cost
+cb = 0.1 # needs to be small so that MG stores energy rather than export energy
+ci = lmp # change
+ce = 0.8*lmp #change
+#
+ndl = 6 # number of dispatchable load
+ng = 3 # number of generators
+nb = 1 # number of storage
+#
+model.sub = SubModel()
+model.sub.nb = RangeSet(0,nb-1)
+model.sub.ndl = RangeSet(0,ndl-1)
+model.sub.ntt = RangeSet(0,nt-1)
+model.sub.ng = RangeSet(0,ng-1)
+
+#%% MG Variables
+# 1. Dispatchable loads
+one = np.ones(nt)
+Pdmin = 0.1*np.array([0.5*one,4*one,2*one,5.5*one,1*one,7*one])
+Pdmax = 0.03*np.array([10*one,16*one,15*one,20*one,27*one,32*one])
+
+def b1(model,i,j):
+    return (Pdmin[i,j],Pdmax[i,j])
+model.sub.pd=Var(model.sub.ndl, model.sub.ntt, bounds = b1)
+
+# 2. Non-controllable load    
+nload = 0.03 * np.array([[120.6, 115.8, 114.8, 112.6, 114.0, 113.4, 
+                  117.1, 126.3, 130.7, 132.5, 135.6, 134.8, 
+                  136.5, 137.7, 137.1, 138.0, 136.3, 133.3, 
+                  131.7, 129.3, 128.2, 127.4, 125.6, 124.2]]) # sample load profile
+nload = nload[:,0:nt]
+
+# 3. Generators
+Gmaxs = 0.3 * np.array([5*one,4.5*one,7*one])
+Gmins = np.array([1*one, 0.8*one, 1.5*one])
+def b2(model,i,j):
+    return (Gmins[i,j],Gmaxs[i,j])
+model.sub.pg = Var(model.sub.ng, model.sub.ntt, bounds=b2)
+
+Rgsmin = -0.3*Gmaxs
+Rgsup = 0.3*Gmaxs
+def b8(model,i,j):
+    return (0,0)
+model.sub.rgs = Var(model.sub.ng, model.sub.ntt, bounds=b8)
+model.sub.z = Var(model.sub.ng, model.sub.ntt)
+# 4. Storage
+# power to and from storage
+Pbmin = -3*np.ones((nb,nt))
+Pbmax = 3*np.ones((nb,nt))
+def b3(model,i,j):
+    return (Pbmin[i,j],Pbmax[i,j])
+model.sub.pb = Var(model.sub.nb, model.sub.ntt, bounds=b3)
+
+# state of charge
+Bmin = np.zeros((nb,nt))
+Bmax = 10*np.ones((nb,nt))
+def b4(model,i,j):
+    return (Bmin[i,j],Bmax[i,j])
+model.sub.b = Var(model.sub.nb, model.sub.ntt, bounds=b4)
+
+# 4. Import & Export
+def b5(model,i):
+    return (0, 1000)
+model.sub.ex = Var(model.sub.ntt, bounds=b5)
+
+def b6(model,i):
+    return (0,1000)
+model.sub.im = Var(model.sub.ntt, bounds=b6)
+
+Nmin = -20*one
+Nmax = 20*one
+def b7(model,i):
+    return (Nmin[i],Nmax[i])
+model.sub.net = Var(model.sub.ntt, bounds=b7)
+
+#%% TS Constraints
+# Power Flow Constraints
 model.cons = ConstraintList()
+
 for i in xrange(busnum):
     for j in xrange(nt):
         if i==0:
@@ -116,27 +203,20 @@ for i in xrange(busnum):
             model.cons.add(model.Pinj[i,j]==-loads[i,j]+model.pg[4,j])
         elif i==26:
             model.cons.add(model.Pinj[i,j]==-loads[i,j]+model.pg[5,j])
-    #      elseif i==wbus
-    #      constraints=[constraints,Pinj(i,:)==-loads(i,:)+wst(1,:)];
+#        elif i==mbus:
+#            model.cons.add(model.Pinj[i,j]==-loads[i,j]+model.sub.net[j])
     #      elseif i==mbus
     #      constraints=[constraints,Pinj(i,:)==-loads(i,:)+mg];
         else:
             model.cons.add(model.Pinj[i,j]==-loads[i,j])
 
-model.theta =  Var(model.bn1, model.nt) #bus angle
-Bredinv = inv(Bred)
 for r in xrange(busnum-1):
     for c in xrange(nt):
         model.cons.add(model.theta[r,c] == sum(Bredinv[r,i]*model.Pinj[i,c] for i in xrange(busnum-1)))
 
-def b3(model,i,j):
-    return (-lineC[i,0], lineC[i,0])
-model.pflow =  Var(model.ln, model.nt, bounds=b3) #line flow
-prod = np.dot(D,m)
 for r in xrange(linenum):
     for c in xrange(nt):
         model.cons.add(model.pflow[r,c] == sum(prod[r,i]*model.theta[i,c] for i in xrange(busnum-1)))
-#%% Constraints
   
 #  %constraints=[constraints,sum(rlsup)+sum(rgsdn)==pvup,sum(rlsdn)+sum(rgsup)==pvdn]; 
 #  constraints=[constraints,sum(rgs)==0.03*sum(loads)+0.05*wst(1,:)]; % secondary reserve constraint
@@ -161,109 +241,18 @@ for g in xrange(gennum):
         model.cons.add(model.rgs[g,h] <= model.z[g,h])
         model.cons.add(-model.rgs[g,h] <= model.z[g,h])
         
-#%% Objective
+#%% TS Objective
 #def exps(model):
 a = sum(crgs[0,i] * model.z[i,j] for i in xrange(gennum) for j in xrange(nt))
 b = sum(model.onoff[i,j]*conoff[0,i] for i in xrange(gennum) for j in xrange(nt))
 c = sum(model.pg[i,j]*cg1[0,i] for i in xrange(gennum) for j in xrange(nt))
 d = sum(model.pg[i,j]*model.pg[i,j]*cg2[0,i] for i in xrange(gennum) for j in xrange(nt))
-#    return a+b+c+d
-#model.obj = Objective(rule = exps)
 model.obj = Objective(expr = a+b+c+d, sense = minimize)
 
-
-
-
-
-
-
-
-#%% Lower Level Problem：Microgrid Model
-#%% System Parameters
-lmp = 5.3*np.ones(nt)
-cg = np.array([[3.3, 3.3, 3.3]]) 
-cd = 1.01*np.array([[3.3, 3.3, 3.3, 3.3, 3.3, 3.3]]) # slightly larger than cg to encourage cost
-cb = 0.1 # needs to be small so that MG stores energy rather than export energy
-ci = lmp # change
-ce = 0.8*lmp #change
-#
-ndl = 6 # number of dispatchable load
-ng = 3 # number of generators
-nb = 1 # number of storage
-#
-model.sub = SubModel()
-model.sub.nb = RangeSet(0,nb-1)
-model.sub.ndl = RangeSet(0,ndl-1)
-model.sub.ntt = RangeSet(0,nt-1)
-model.sub.ng = RangeSet(0,ng-1)
-#%% Define Optimization Variables and Their Bounds
-# 1. Dispatchable loads
-
-one = np.ones(nt)
-Pdmin = 0.1*np.array([0.5*one,4*one,2*one,5.5*one,1*one,7*one])
-Pdmax = 0.03*np.array([10*one,16*one,15*one,20*one,27*one,32*one])
-
-def b1(model,i,j):
-    return (Pdmin[i,j],Pdmax[i,j])
-model.sub.pd=Var(model.sub.ndl, model.sub.ntt, bounds = b1)
-
-# 2. Non-controllable load    
-nload = 0.03 * np.array([[120.6, 115.8, 114.8, 112.6, 114.0, 113.4, 
-                  117.1, 126.3, 130.7, 132.5, 135.6, 134.8, 
-                  136.5, 137.7, 137.1, 138.0, 136.3, 133.3, 
-                  131.7, 129.3, 128.2, 127.4, 125.6, 124.2]]) # sample load profile
-nload = nload[:,0:nt]
-
-# 3. Generators
-Gmax = 0.3 * np.array([5*one,4.5*one,7*one])
-Gmin = np.array([1*one, 0.8*one, 1.5*one])
-def b2(model,i,j):
-    return (Gmin[i,j],Gmax[i,j])
-model.sub.pg = Var(model.sub.ng, model.sub.ntt, bounds=b2)
-
-Rgsmin = -0.3*Gmax
-Rgsup = 0.3*Gmax
-def b8(model,i,j):
-    return (0,0)
-model.sub.rgs = Var(model.sub.ng, model.sub.ntt, bounds=b8)
-model.sub.z = Var(model.sub.ng, model.sub.ntt)
-
-# 4. Storage
-# power to and from storage
-Pbmin = -3*np.ones((nb,nt))
-Pbmax = 3*np.ones((nb,nt))
-def b3(model,i,j):
-    return (Pbmin[i,j],Pbmax[i,j])
-model.sub.pb = Var(model.sub.nb, model.sub.ntt, bounds=b3)
-
-# state of charge
-Bmin = np.zeros((nb,nt))
-Bmax = 10*np.ones((nb,nt))
-def b4(model,i,j):
-    return (Bmin[i,j],Bmax[i,j])
-model.sub.b = Var(model.sub.nb, model.sub.ntt, bounds=b4)
-
-
-
-# 4. Import & Export
-def b5(model,i):
-    return (0, 1000)
-model.sub.ex = Var(model.sub.ntt, bounds=b5)
-
-def b6(model,i):
-    return (0,1000)
-model.sub.im = Var(model.sub.ntt, bounds=b6)
-
-Nmin = -20*one
-Nmax = 20*one
-def b7(model,i):
-    return (Nmin[i],Nmax[i])
-model.sub.net = Var(model.sub.ntt, bounds=b7)
- 
-#%% Constraints
+#%% MG Constraints
 # DG Constraints
-Rdn = 0.3*Gmax
-Rup = 0.3*Gmax
+Rdn = 0.3*Gmaxs
+Rup = 0.3*Gmaxs
 model.sub.cons = ConstraintList()
 model.sub.cons.add(model.sub.b[0,0] <= 5) # initialize battery energy state
 model.sub.cons.add(model.sub.b[0,0] >= 5) # initialize battery energy state
@@ -277,7 +266,7 @@ for g in xrange(ng):
 for g in xrange(ng):
     for h in xrange(nt):
 #        model.sub.cons.add(Gmin[g,h] <= model.sub.pg[g,h] + model.sub.rgs[g,h])#Generator Bounds with Rgs
-        model.sub.cons.add(model.sub.pg[g,h] + model.sub.rgs[g,h] <= Gmax[g,h])
+        model.sub.cons.add(model.sub.pg[g,h] + model.sub.rgs[g,h] <= Gmaxs[g,h])
         model.sub.cons.add(model.sub.rgs[g,h] <= model.sub.z[g,h])
         model.sub.cons.add(-model.sub.rgs[g,h] <= model.sub.z[g,h])
 
@@ -295,33 +284,21 @@ for i in xrange(nb):
 for i in xrange(nb):
     for j in xrange(nt):
         model.sub.cons.add(-model.sub.pb[i,j] <= model.sub.b[i,j])
-
-#%% Objective
+        
+#%% MG Objective
 aa = sum(cb * model.sub.b[i,j] for i in xrange(nb) for j in xrange(nt))
 bb = -sum(model.sub.pd[i,j]*cd[0,i] for i in xrange(ndl) for j in xrange(nt))
 cc = sum(model.sub.pg[i,j]*cg[0,i] for i in xrange(ng) for j in xrange(nt))
 dd = -sum(model.sub.ex[i]*ce[i] for i in xrange(nt))
 ee = sum(model.sub.im[i]*ci[i] for i in xrange(nt))
-
 model.sub.obj = Objective(expr = aa+bb+cc+dd+ee, sense = minimize)
-#model.sub.obj = Objective(expr = aa, sense = minimize)
 
-
-
-
-#model.sub.y = Var(bounds=(0,None))
-#model.sub.o = Objective(expr=model.sub.y, sense=minimize)
-#model.sub.con = ConstraintList()
-#model.sub.con.add ( model.sub.y >= 3)
-#model.sub.c3 = Constraint(expr=model.sub.y <= 12)
-
+#%% Solve
 opt = SolverFactory("bilevel_blp_global")
 opt.options["solver"] = 'gurobi'
 results = opt.solve(model,tee=True)
 
-
-model.sub.o.display()
-model.sub.y.display()
+#%% Results
 model.sub.pg.display()
 model.sub.rgs.display()
 model.sub.pb.display()
@@ -337,5 +314,5 @@ model.sub.obj.display()
 #model.onoff.display()
 ##model.Pinj.display()
 #model.pflow.display()
-#model.obj.display()
+model.obj.display()
 

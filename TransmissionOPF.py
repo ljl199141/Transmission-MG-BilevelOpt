@@ -110,8 +110,6 @@ for i in xrange(busnum):
             model.cons.add(model.Pinj[i,j]==-loads[i,j]+model.pg[4,j])
         elif i==26:
             model.cons.add(model.Pinj[i,j]==-loads[i,j]+model.pg[5,j])
-    #      elseif i==wbus
-    #      constraints=[constraints,Pinj(i,:)==-loads(i,:)+wst(1,:)];
     #      elseif i==mbus
     #      constraints=[constraints,Pinj(i,:)==-loads(i,:)+mg];
         else:
